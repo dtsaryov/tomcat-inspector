@@ -41,7 +41,7 @@ func main() {
 	switch cmd {
 	case "getServerInfo":
 		{
-			println(readProperty(tomcatHome))
+			fmt.Println(readProperty(tomcatHome))
 		}
 	case "searchForClasses":
 		{
