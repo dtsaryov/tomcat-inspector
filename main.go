@@ -36,17 +36,27 @@ var Classes = [2]ClassEntries{
 
 func main() {
 	var cmd = os.Args[1]
-	var tomcatHome = strings.TrimSuffix(os.Args[2], "/")
 
 	switch cmd {
 	case "getServerInfo":
 		{
+			var tomcatHome = strings.TrimSuffix(os.Args[2], "/")
 			fmt.Println(readProperty(tomcatHome))
 		}
 	case "searchForClasses":
 		{
+			var tomcatHome = strings.TrimSuffix(os.Args[2], "/")
 			for class, jar := range searchForClasses(tomcatHome) {
 				fmt.Printf("%s:%s\n", class, jar)
+			}
+		}
+	case "getJavaHome":
+		{
+			env, exists := os.LookupEnv("JAVA_HOME")
+			if exists {
+				fmt.Printf(env)
+			} else {
+				println("Error: JAVA_HOME is not set")
 			}
 		}
 	default:
