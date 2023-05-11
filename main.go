@@ -5,6 +5,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 )
 
@@ -35,51 +36,64 @@ var Classes = [2]ClassEntries{
 }
 
 func main() {
-	var cmd = os.Args[1]
+	if len(os.Args) == 1 {
+		handleResult("Error: No command provided")
+		return
+	}
 
-	switch cmd {
+	switch os.Args[1] {
 	case "getServerInfo":
 		{
-			var tomcatHome = strings.TrimSuffix(os.Args[2], "/")
-			fmt.Println(readProperty(tomcatHome))
+			if len(os.Args) == 2 {
+				handleResult("Error: Tomcat path is not provided")
+				return
+			}
+
+			handleResult(getServerInfo(strings.TrimSuffix(os.Args[2], "/")))
 		}
 	case "searchForClasses":
 		{
+			if len(os.Args) == 2 {
+				handleResult("Error: Tomcat path is not provided")
+				return
+			}
+
 			var tomcatHome = strings.TrimSuffix(os.Args[2], "/")
+			var classes = searchForClasses(tomcatHome)
+			if !isSearchDone(classes) {
+				handleResult(fmt.Sprintf("Error: unable to find all required classes"))
+				return
+			}
+
 			for class, jar := range searchForClasses(tomcatHome) {
 				fmt.Printf("%s:%s\n", class, jar)
 			}
 		}
 	case "getJavaHome":
 		{
-			env, exists := os.LookupEnv("JAVA_HOME")
-			if exists {
-				fmt.Printf(env)
-			} else {
-				println("Error: JAVA_HOME is not set")
-			}
+			handleResult(findJavaHome())
 		}
 	default:
-		println("Error: No command specified")
+		handleResult(fmt.Sprintf("Error: Command is not supported: %s", os.Args[1]))
 	}
 }
 
-func readProperty(tomcatHome string) (serverInfo string) {
+func getServerInfo(tomcatHome string) string {
 	var catalinaJar = findCatalinaJar(tomcatHome)
 	if len(catalinaJar) == 0 {
-		return "Error: Unable to find catalina.jar"
+		return fmt.Sprintf("Error: Unable to find catalina.jar. Tomcat path: %s", tomcatHome)
 	}
 
 	reader, err := zip.OpenReader(catalinaJar)
 	if err != nil {
-		return "Error: Failed to read catalina.jar"
+		return fmt.Sprintf("Error: Failed to read %s", catalinaJar)
 	}
 
 	for _, file := range reader.File {
 		if strings.HasSuffix(file.Name, "ServerInfo.properties") {
 			readFile, err := file.Open()
 			if err != nil {
-				return "Error: Failed to read ServerInfo.properties"
+				return fmt.Sprintf("Error: Failed to read %s", file.Name)
 			}
 
 			scanner := bufio.NewScanner(readFile)
@@ -114,7 +128,6 @@ func searchForClasses(tomcatHome string) map[string]string {
 
 	var jars = collectJars(tomcatHome)
 	if len(jars) == 0 {
-		println("Error: No JARs found")
 		return classes
 	}
 
@@ -185,4 +198,31 @@ func isSearchDone(classes map[string]string) bool {
 		}
 	}
 	return true
+}
+
+func findJavaHome() string {
+	javaHomeEnv, exists := os.LookupEnv("JAVA_HOME")
+	if exists {
+		return javaHomeEnv
+	}
+
+	output, err := exec.Command("which", "java").Output()
+	if err != nil {
+		return "Error: Failed to execute \"which java\""
+	}
+
+	if len(output) > 0 {
+		return strings.Replace(strings.TrimSuffix(string(output), "\n"), "/bin/java", "", 1)
+	}
+
+	return "Error: Unable to detect JAVA_HOME"
+}
+
+//goland:noinspection GoUnhandledErrorResult
+func handleResult(result string) {
+	if strings.HasPrefix(result, "Error: ") {
+		fmt.Fprintf(os.Stderr, strings.Replace(result, "Error: ", "", 1))
+	} else {
+		fmt.Fprintf(os.Stdout, "%s", result)
+	}
 }
