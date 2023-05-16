@@ -5,114 +5,128 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 )
+
+type Result[T any] struct {
+	value    T
+	error    bool
+	errorMsg string
+}
 
 type ClassEntry struct {
 	className   string
 	zipLocation string
 }
-type ClassEntries struct {
-	entries []ClassEntry
-}
 
 var CatalinaLocations = [...]string{"lib", "server/lib"}
 var LibLocations = [...]string{"lib", "common/lib", "shared/lib"}
 
-var Classes = [2]ClassEntries{
+var Classes = [...][...]ClassEntry{
 	{
-		[]ClassEntry{
-			{"javax.servlet.jsp.JspPage", "javax/servlet/jsp/JspPage.class"},
-			{"jakarta.servlet.jsp.JspPage", "jakarta/servlet/jsp/JspPage.class"},
-		},
+		{"javax.servlet.jsp.JspPage", "javax/servlet/jsp/JspPage.class"},
+		{"jakarta.servlet.jsp.JspPage", "jakarta/servlet/jsp/JspPage.class"},
 	},
 	{
-		[]ClassEntry{
-			{"javax.servlet.Servlet", "javax/servlet/Servlet.class"},
-			{"jakarta.servlet.Servlet", "jakarta/servlet/Servlet.class"},
-		},
+		{"javax.servlet.Servlet", "javax/servlet/Servlet.class"},
+		{"jakarta.servlet.Servlet", "jakarta/servlet/Servlet.class"},
 	},
 }
 
 func main() {
 	if len(os.Args) == 1 {
-		handleResult("Error: No command provided")
+		printResult(createErrorResult("No command provided"))
+		return
+	}
+	if len(os.Args) == 2 {
+		printResult(createErrorResult("Tomcat path is not provided"))
 		return
 	}
 
 	switch os.Args[1] {
 	case "getServerInfo":
 		{
-			if len(os.Args) == 2 {
-				handleResult("Error: Tomcat path is not provided")
-				return
-			}
-
-			handleResult(getServerInfo(strings.TrimSuffix(os.Args[2], "/")))
+			printResult(getServerInfo(strings.TrimSuffix(os.Args[2], "/")))
 		}
 	case "searchForClasses":
 		{
-			if len(os.Args) == 2 {
-				handleResult("Error: Tomcat path is not provided")
+			result := searchForClasses(strings.TrimSuffix(os.Args[2], "/"))
+			if result.error {
+				printResult(createErrorResult(result.errorMsg))
 				return
 			}
 
-			var tomcatHome = strings.TrimSuffix(os.Args[2], "/")
-			var classes = searchForClasses(tomcatHome)
+			var classes = result.value
 			if !isSearchDone(classes) {
-				handleResult(fmt.Sprintf("Error: unable to find all required classes"))
+				printResult(createErrorResult("Unable to find all required classes"))
 				return
 			}
 
-			for class, jar := range searchForClasses(tomcatHome) {
+			for class, jar := range classes {
 				fmt.Printf("%s:%s\n", class, jar)
 			}
 		}
-	case "getJavaHome":
-		{
-			handleResult(findJavaHome())
-		}
 	default:
-		handleResult(fmt.Sprintf("Error: Command is not supported: %s", os.Args[1]))
+		printResult(createErrorResult(fmt.Sprintf("Command is not supported: %s", os.Args[1])))
 	}
 }
 
-func getServerInfo(tomcatHome string) string {
+func getServerInfo(tomcatHome string) Result[string] {
 	var catalinaJar = findCatalinaJar(tomcatHome)
 	if len(catalinaJar) == 0 {
-		return fmt.Sprintf("Error: Unable to find catalina.jar. Tomcat path: %s", tomcatHome)
+		return createErrorResult(fmt.Sprintf("Unable to find catalina.jar. Tomcat path: %s", tomcatHome))
 	}
 
-	reader, err := zip.OpenReader(catalinaJar)
+	catalinaJarReader, err := zip.OpenReader(catalinaJar)
 	if err != nil {
-		return fmt.Sprintf("Error: Failed to read %s", catalinaJar)
+		return createErrorResult(fmt.Sprintf("Failed to read %s", catalinaJar))
 	}
+	defer func(catalinaJarReader *zip.ReadCloser) {
+		err := catalinaJarReader.Close()
+		if err != nil {
 
-	for _, file := range reader.File {
+			panic(err)
+		}
+	}(catalinaJarReader)
+
+	var serverInfo = ""
+
+	for _, file := range catalinaJarReader.File {
 		if strings.HasSuffix(file.Name, "ServerInfo.properties") {
-			readFile, err := file.Open()
+			fileReader, err := file.Open()
 			if err != nil {
-				return fmt.Sprintf("Error: Failed to read %s", file.Name)
+				return createErrorResult(fmt.Sprintf("Failed to read %s", file.Name))
 			}
 
-			scanner := bufio.NewScanner(readFile)
+			scanner := bufio.NewScanner(fileReader)
 			scanner.Split(bufio.ScanLines)
 			for scanner.Scan() {
 				var property = scanner.Text()
 				if strings.HasPrefix(property, "server.info") {
-					return strings.SplitAfter(property, "=")[1]
+					serverInfo = strings.SplitAfter(property, "=")[1]
 				}
+			}
+
+			err = fileReader.Close()
+			if err != nil {
+				panic(err)
 			}
 		}
 	}
 
-	return "Error: Unable to find \"server.info\" property"
+	if len(serverInfo) > 0 {
+		return Result[string]{serverInfo, false, ""}
+	} else {
+		return createErrorResult("Unable to find \"server.info\" property")
+	}
 }
 
-func findCatalinaJar(tomcatHome string) (catalinaJarLocation string) {
+func findCatalinaJar(tomcatHome string) string {
 	for _, path := range CatalinaLocations {
-		files, _ := os.ReadDir(tomcatHome + "/" + path)
+		files, err := os.ReadDir(tomcatHome + "/" + path)
+		if err != nil {
+			continue
+		}
 
 		for _, file := range files {
 			if file.Name() == "catalina.jar" {
@@ -123,37 +137,37 @@ func findCatalinaJar(tomcatHome string) (catalinaJarLocation string) {
 	return ""
 }
 
-func searchForClasses(tomcatHome string) map[string]string {
+func searchForClasses(tomcatHome string) Result[map[string]string] {
 	var classes = make(map[string]string)
 
 	var jars = collectJars(tomcatHome)
 	if len(jars) == 0 {
-		return classes
+		return createMapResult(classes)
 	}
 
 	for _, path := range jars {
 		if isSearchDone(classes) {
-			return classes
+			return createMapResult(classes)
 		}
 
-		reader, err := zip.OpenReader(path)
+		r, err := zip.OpenReader(path)
 		if err != nil {
 			continue
 		}
 
-		for _, file := range reader.File {
+		for _, file := range r.File {
 			if isSearchDone(classes) {
-				return classes
+				break
 			}
 
 			for _, classEntries := range Classes {
 				if isSearchDone(classes) {
-					return classes
+					break
 				}
 
-				for _, classEntry := range classEntries.entries {
+				for _, classEntry := range classEntries {
 					if isSearchDone(classes) {
-						return classes
+						break
 					}
 
 					if file.Name == classEntry.zipLocation {
@@ -162,9 +176,14 @@ func searchForClasses(tomcatHome string) map[string]string {
 				}
 			}
 		}
+
+		err = r.Close()
+		if err != nil {
+			panic(err)
+		}
 	}
 
-	return classes
+	return createMapResult(classes)
 }
 
 func collectJars(tomcatHome string) []string {
@@ -188,9 +207,12 @@ func isSearchDone(classes map[string]string) bool {
 	for _, classVariants := range Classes {
 		var classFound = false
 
-		for _, classVariant := range classVariants.entries {
+		for _, classVariant := range classVariants {
 			var _, hasClass = classes[classVariant.className]
-			classFound = hasClass
+			if hasClass {
+				classFound = true
+				break
+			}
 		}
 
 		if !classFound {
@@ -200,29 +222,24 @@ func isSearchDone(classes map[string]string) bool {
 	return true
 }
 
-func findJavaHome() string {
-	javaHomeEnv, exists := os.LookupEnv("JAVA_HOME")
-	if exists {
-		return javaHomeEnv
+func printResult(result Result[string]) {
+	if result.error {
+		_, err := fmt.Fprint(os.Stderr, result.errorMsg)
+		if err != nil {
+			panic(err)
+		}
+	} else {
+		_, err := fmt.Fprintf(os.Stdout, result.value)
+		if err != nil {
+			panic(err)
+		}
 	}
-
-	output, err := exec.Command("which", "java").Output()
-	if err != nil {
-		return "Error: Failed to execute \"which java\""
-	}
-
-	if len(output) > 0 {
-		return strings.Replace(strings.TrimSuffix(string(output), "\n"), "/bin/java", "", 1)
-	}
-
-	return "Error: Unable to detect JAVA_HOME"
 }
 
-//goland:noinspection GoUnhandledErrorResult
-func handleResult(result string) {
-	if strings.HasPrefix(result, "Error: ") {
-		fmt.Fprintf(os.Stderr, strings.Replace(result, "Error: ", "", 1))
-	} else {
-		fmt.Fprintf(os.Stdout, "%s", result)
-	}
+func createMapResult(value map[string]string) Result[map[string]string] {
+	return Result[map[string]string]{value, false, ""}
+}
+
+func createErrorResult(errorMsg string) Result[string] {
+	return Result[string]{"", true, errorMsg}
 }
