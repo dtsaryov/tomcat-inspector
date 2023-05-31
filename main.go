@@ -22,14 +22,14 @@ type ClassEntry struct {
 var CatalinaLocations = [...]string{"lib", "server/lib"}
 var LibLocations = [...]string{"lib", "common/lib", "shared/lib"}
 
-var Classes = [...][...]ClassEntry{
+var Classes = [...][2]ClassEntry{
 	{
-		{"javax.servlet.jsp.JspPage", "javax/servlet/jsp/JspPage.class"},
-		{"jakarta.servlet.jsp.JspPage", "jakarta/servlet/jsp/JspPage.class"},
+		ClassEntry{"javax.servlet.jsp.JspPage", "javax/servlet/jsp/JspPage.class"},
+		ClassEntry{"jakarta.servlet.jsp.JspPage", "jakarta/servlet/jsp/JspPage.class"},
 	},
 	{
-		{"javax.servlet.Servlet", "javax/servlet/Servlet.class"},
-		{"jakarta.servlet.Servlet", "jakarta/servlet/Servlet.class"},
+		ClassEntry{"javax.servlet.Servlet", "javax/servlet/Servlet.class"},
+		ClassEntry{"jakarta.servlet.Servlet", "jakarta/servlet/Servlet.class"},
 	},
 }
 
